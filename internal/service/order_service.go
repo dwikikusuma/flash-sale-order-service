@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"order-service/internal/entity"
+	log "order-service/internal/infrastructure"
 	"order-service/internal/repository"
 )
 
@@ -25,7 +26,7 @@ type orderService struct {
 }
 
 // NewOrderService creates and returns a new instance of orderService.
-func NewOrderService(productRepository repository.OrderRepository, productServiceURL, PricingServiceURL string) *orderService {
+func NewOrderService(productRepository repository.OrderRepository, productServiceURL, PricingServiceURL string) OrderService {
 	return &orderService{
 		OrderRepository:   productRepository,
 		ProductServiceURL: productServiceURL,
@@ -49,15 +50,18 @@ func (s *orderService) CreateOrder(order *entity.Order) (*entity.Order, error) {
 	for _, productRequest := range order.ProductRequests {
 		isValid, err := s.checkProductStock(productRequest.ProductID, productRequest.Quantity)
 		if err != nil {
+			log.Logger.Error().Err(err).Int64("productID", productRequest.ProductID).Msg("Failed to check product stock")
 			return nil, fmt.Errorf("failed to check product stock: %w", err)
 		}
 
 		if !isValid {
+			log.Logger.Warn().Int64("productID", productRequest.ProductID).Msg("Insufficient stock for product")
 			return nil, fmt.Errorf("insufficient stock for product ID %d", productRequest.ProductID)
 		}
 
 		pricing, err := s.getPricing(productRequest.ProductID)
 		if err != nil {
+			log.Logger.Error().Err(err).Msg("Failed to get pricing for product")
 			return nil, fmt.Errorf("failed to get pricing for product ID %d: %w", productRequest.ProductID, err)
 		}
 
@@ -69,10 +73,12 @@ func (s *orderService) CreateOrder(order *entity.Order) (*entity.Order, error) {
 
 	createdOrder, err := s.OrderRepository.CreateOrder(order)
 	if err != nil {
+		log.Logger.Error().Err(err).Msg("Failed to create order")
 		return nil, fmt.Errorf("failed to create order: %w", err)
 	}
 
 	if createdOrder == nil {
+		log.Logger.Warn().Msg("Order creation returned nil")
 		return nil, fmt.Errorf("failed to create order, order is nil")
 	}
 
@@ -92,9 +98,11 @@ func (s *orderService) UpdateOrder(order *entity.Order) (*entity.Order, error) {
 	// This could involve updating the order in a database, etc.
 	updatedOrder, err := s.OrderRepository.UpdateOrder(order)
 	if err != nil {
+		log.Logger.Error().Err(err).Msg("Failed to update order")
 		return nil, fmt.Errorf("failed to update order: %w", err)
 	}
 	if updatedOrder == nil {
+		log.Logger.Warn().Int64("orderID", order.ID).Msg("Order not found for update")
 		return nil, fmt.Errorf("order with ID %d not found", order.ID)
 	}
 	return updatedOrder, nil
@@ -113,15 +121,18 @@ func (s *orderService) CancelOrder(orderId int64) (*entity.Order, error) {
 	// This could involve updating the order status in a database, etc.
 	order, err := s.OrderRepository.GetOrderByID(orderId)
 	if err != nil {
+		log.Logger.Error().Err(err).Int64("orderID", orderId).Msg("Failed to retrieve order for cancellation")
 		return nil, fmt.Errorf("failed to retrieve order: %w", err)
 	}
 
 	if order == nil {
+		log.Logger.Warn().Int64("orderID", orderId).Msg("Order not found for cancellation")
 		return nil, fmt.Errorf("order with ID %d not found", orderId)
 	}
 	order.Status = "cancelled" // Simulating a cancellation of the order
 	cancelledOrder, err := s.OrderRepository.UpdateOrder(order)
 	if err != nil {
+		log.Logger.Error().Err(err).Int64("orderID", orderId).Msg("Failed to cancel order")
 		return nil, fmt.Errorf("failed to cancel order: %w", err)
 	}
 
@@ -131,22 +142,26 @@ func (s *orderService) CancelOrder(orderId int64) (*entity.Order, error) {
 func (s *orderService) checkProductStock(productID int64, quantity int64) (bool, error) {
 	response, err := http.Get(fmt.Sprintf("%s/product/%d/stock", s.ProductServiceURL, productID))
 	if err != nil {
+		log.Logger.Error().Err(err).Int64("productID", productID).Msg("Failed to check product stock")
 		return false, fmt.Errorf("failed to check product stock: %w", err)
 	}
 	defer response.Body.Close()
 
 	if response.StatusCode != http.StatusOK {
+		log.Logger.Error().Int64("productID", productID).Int("statusCode", response.StatusCode).Msg("Failed to check product stock")
 		return false, fmt.Errorf("failed to check product stock, status code: %d", response.StatusCode)
 	}
 
 	var stockResponse map[string]int
 	err = json.NewDecoder(response.Body).Decode(&stockResponse)
 	if err != nil {
+		log.Logger.Error().Err(err).Int64("productID", productID).Msg("Failed to decode stock response")
 		return false, fmt.Errorf("failed to decode stock response: %w", err)
 	}
 
 	productStock, exists := stockResponse["stock"]
 	if !exists {
+		log.Logger.Warn().Int64("productID", productID).Msg("Stock information not found for product")
 		return false, fmt.Errorf("stock information not found for product ID %d", productID)
 	}
 
@@ -156,17 +171,20 @@ func (s *orderService) checkProductStock(productID int64, quantity int64) (bool,
 func (s *orderService) getPricing(productID int64) (*entity.Pricing, error) {
 	response, err := http.Get(fmt.Sprintf("%s/product/%d/price", s.PricingServiceURL, productID))
 	if err != nil {
+		log.Logger.Error().Err(err).Int64("productID", productID).Msg("Failed to get product pricing")
 		return nil, fmt.Errorf("failed to get product pricing: %w", err)
 	}
 	defer response.Body.Close()
 
 	if response.StatusCode != http.StatusOK {
+		log.Logger.Error().Int64("productID", productID).Int("statusCode", response.StatusCode).Msg("Failed to get product pricing")
 		return nil, fmt.Errorf("failed to get product pricing, status code: %d", response.StatusCode)
 	}
 
 	var pricing entity.Pricing
 	err = json.NewDecoder(response.Body).Decode(&pricing)
 	if err != nil {
+		log.Logger.Error().Err(err).Int64("productID", productID).Msg("Failed to decode pricing response")
 		return nil, fmt.Errorf("failed to decode pricing response: %w", err)
 	}
 
