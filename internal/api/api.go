@@ -15,7 +15,6 @@ type OrderHandler interface {
 	CreateOrder(c echo.Context) error
 	UpdateOrder(c echo.Context) error
 	CancelOrder(c echo.Context) error
-	RegisterRoutes(e *echo.Echo)
 }
 
 type orderHandler struct {
@@ -26,12 +25,6 @@ func NewOrderHandler(orderService service.OrderService) OrderHandler {
 	return &orderHandler{
 		OrderService: orderService,
 	}
-}
-
-func (oh *orderHandler) RegisterRoutes(e *echo.Echo) {
-	e.POST("/order", oh.CreateOrder)       // Create a new order
-	e.PUT("/order", oh.UpdateOrder)        // Update an existing order
-	e.DELETE("/order/:id", oh.CancelOrder) // Cancel an order by ID
 }
 
 func (oh *orderHandler) CreateOrder(c echo.Context) error {

@@ -7,7 +7,9 @@ import (
 	"order-service/internal/api"
 	"order-service/internal/infrastructure"
 	"order-service/internal/repository"
+	"order-service/internal/routes"
 	"order-service/internal/service"
+	"time"
 )
 
 func main() {
@@ -20,8 +22,10 @@ func main() {
 	e := echo.New()
 	e.Use(middleware.Logger())
 	e.Use(middleware.Recover())
+	e.Use(middleware.RateLimiterWithConfig(infrastructure.GetRateLimiter()))
+	e.Use(middleware.ContextTimeout(15 * time.Second))
 	e.Use(echojwt.JWT("secrete"))
 
-	orderHandler.RegisterRoutes(e)
+	routes.SetupRoutes(e, orderHandler)
 	e.Logger.Fatal(e.Start(":8080"))
 }
