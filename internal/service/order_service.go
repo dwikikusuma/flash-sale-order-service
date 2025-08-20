@@ -47,28 +47,64 @@ func (s *orderService) CreateOrder(order *entity.Order) (*entity.Order, error) {
 	// Logic to create an order
 	// This could involve saving the order to a database, etc.
 	var totalPrice float64
+
+	availabilityCh := make(chan entity.AvailabilityChannel, len(order.ProductRequests))
+	pricingCh := make(chan entity.PricingChannel, len(order.ProductRequests))
+
+	// Launch goroutines to fetch availability and pricing data concurrently
 	for _, productRequest := range order.ProductRequests {
-		isValid, err := s.checkProductStock(productRequest.ProductID, productRequest.Quantity)
-		if err != nil {
-			log.Logger.Error().Err(err).Int64("productID", productRequest.ProductID).Msg("Failed to check product stock")
-			return nil, fmt.Errorf("failed to check product stock: %w", err)
+		go func(productRequest *entity.OrderRequest) {
+			available, err := s.checkProductStock(productRequest.ProductID, productRequest.Quantity)
+			availabilityCh <- entity.AvailabilityChannel{
+				ProductID: productRequest.ProductID,
+				Available: available,
+				Error:     err,
+			}
+		}(&productRequest)
+
+		go func(productRequest *entity.OrderRequest) {
+			pricing, err := s.getPricing(productRequest.ProductID)
+			pricingCh <- entity.PricingChannel{
+				ProductID:  productRequest.ProductID,
+				FinalPrice: pricing.FinalPrice,
+				MarkUp:     pricing.MarkUp,
+				Discount:   pricing.Discount,
+				Error:      err,
+			}
+		}(&productRequest)
+	}
+
+	// Process results from channels
+	// NOTE: Current design doesn't require mapping between availability and pricing channels
+	// since we process them independently (availability for validation, pricing by ProductID matching).
+	// However, for future development where you need to correlate results from multiple channels
+	// for the same product, consider using a map-based approach or combined result channels
+	// to ensure proper pairing of related data.
+	for range order.ProductRequests {
+		availabilityResult := <-availabilityCh
+		pricingResult := <-pricingCh
+
+		if availabilityResult.Error != nil {
+			log.Logger.Error().Err(availabilityResult.Error).Int64("productID", availabilityResult.ProductID).Msg("Failed to check product stock")
+			return nil, fmt.Errorf("failed to check product stock for product ID %d: %w", availabilityResult.ProductID, availabilityResult.Error)
+		}
+		if !availabilityResult.Available {
+			log.Logger.Warn().Int64("productID", availabilityResult.ProductID).Msg("Insufficient stock for product")
+			return nil, fmt.Errorf("insufficient stock for product ID %d", availabilityResult.ProductID)
+		}
+		if pricingResult.Error != nil {
+			log.Logger.Error().Err(pricingResult.Error).Int64("productID", pricingResult.ProductID).Msg("Failed to get pricing for product")
+			return nil, fmt.Errorf("failed to get pricing for product ID %d: %w", pricingResult.ProductID, pricingResult.Error)
 		}
 
-		if !isValid {
-			log.Logger.Warn().Int64("productID", productRequest.ProductID).Msg("Insufficient stock for product")
-			return nil, fmt.Errorf("insufficient stock for product ID %d", productRequest.ProductID)
+		for _, productRequest := range order.ProductRequests {
+			if productRequest.ProductID == pricingResult.ProductID {
+				productRequest.Discount = pricingResult.Discount
+				productRequest.MarkUp = pricingResult.MarkUp
+				productRequest.FinalPrice = pricingResult.FinalPrice
+				totalPrice += productRequest.FinalPrice
+			}
 		}
-
-		pricing, err := s.getPricing(productRequest.ProductID)
-		if err != nil {
-			log.Logger.Error().Err(err).Msg("Failed to get pricing for product")
-			return nil, fmt.Errorf("failed to get pricing for product ID %d: %w", productRequest.ProductID, err)
-		}
-
-		productRequest.Discount = pricing.Discount * float64(productRequest.Quantity)
-		productRequest.MarkUp = pricing.MarkUp * float64(productRequest.Quantity)
-		productRequest.FinalPrice = pricing.FinalPrice * float64(productRequest.Quantity)
-		totalPrice += productRequest.FinalPrice
 	}
 
 	createdOrder, err := s.OrderRepository.CreateOrder(order)
