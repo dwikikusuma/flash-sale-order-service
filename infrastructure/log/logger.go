@@ -1,4 +1,4 @@
-package infrastructure
+package log
 
 import (
 	"github.com/rs/zerolog"

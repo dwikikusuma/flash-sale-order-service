@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"order-service/infrastructure/log"
 	"order-service/internal/entity"
-	log "order-service/internal/infrastructure"
 	"order-service/internal/repository"
 )
 
