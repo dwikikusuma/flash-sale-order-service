@@ -5,6 +5,7 @@ import (
 	infrastructure "order-service/infrastructure/log"
 	"order-service/internal/api"
 	"order-service/internal/repository"
+	"order-service/internal/resource"
 	"order-service/internal/service"
 	reqMiddleware "order-service/middleware"
 	"order-service/routes"
@@ -24,6 +25,8 @@ func main() {
 		config.WithConfigFile("./files/config"),
 		config.WithConfigType("yaml"),
 	)
+
+	_ = resource.InitDB(appConfig)
 
 	orderRepo := repository.NewOrderRepository()
 	orderService := service.NewOrderService(orderRepo, appConfig.Services.Product, appConfig.Services.Pricing)
