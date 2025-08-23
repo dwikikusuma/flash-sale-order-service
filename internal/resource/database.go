@@ -2,11 +2,12 @@ package resource
 
 import (
 	"fmt"
+	"log"
+	"order-service/config"
+
 	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
-	"log"
-	"order-service/config"
 )
 
 func InitDB(appConfig config.Config) *gorm.DB {

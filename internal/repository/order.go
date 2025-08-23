@@ -1,6 +1,11 @@
 package repository
 
-import "order-service/internal/entity"
+import (
+	"context"
+	"gorm.io/gorm"
+	"order-service/infrastructure/log"
+	"order-service/internal/entity"
+)
 
 // OrderRepository defines the interface for managing orders in the repository layer.
 // It provides methods to retrieve, create, update, and delete orders.
@@ -13,7 +18,7 @@ type OrderRepository interface {
 	// Returns:
 	//   - A pointer to the Order entity if found.
 	//   - An error if the retrieval process fails or the order is not found.
-	GetOrderByID(id int64) (*entity.Order, error)
+	GetOrderByID(ctx context.Context, id int64) (*entity.Order, error)
 
 	// CreateOrder creates a new order in the repository.
 	//
@@ -23,7 +28,7 @@ type OrderRepository interface {
 	// Returns:
 	//   - A pointer to the created Order entity with updated fields.
 	//   - An error if the creation process fails.
-	CreateOrder(order *entity.Order) (*entity.Order, error)
+	CreateOrder(ctx context.Context, order *entity.Order) (*entity.Order, error)
 
 	// UpdateOrder updates an existing order in the repository.
 	//
@@ -33,7 +38,7 @@ type OrderRepository interface {
 	// Returns:
 	//   - A pointer to the updated Order entity.
 	//   - An error if the update process fails.
-	UpdateOrder(order *entity.Order) (*entity.Order, error)
+	UpdateOrder(ctx context.Context, order *entity.Order) (*entity.Order, error)
 
 	// DeleteOrder deletes an order by its ID from the repository.
 	//
@@ -42,41 +47,23 @@ type OrderRepository interface {
 	//
 	// Returns:
 	//   - An error if the deletion process fails or the order is not found.
-	DeleteOrder(id int64) error
+	DeleteOrder(ctx context.Context, id int64) error
 }
 
 // orderRepository is a concrete implementation of the OrderRepository interface.
 // It uses an in-memory map to simulate order storage.
 type orderRepository struct {
+	db *gorm.DB
 }
 
 // NewOrderRepository creates and returns a new instance of orderRepository.
 //
 // Returns:
 //   - An instance of OrderRepository.
-func NewOrderRepository() OrderRepository {
-	return &orderRepository{}
-}
-
-// orders is an in-memory map simulating order storage.
-// In a real application, this would be replaced with a database or other persistent storage.
-var orders = map[int64]*entity.Order{
-	1: {
-		ID:              1,
-		UserID:          123,
-		ProductRequests: make([]entity.OrderRequest, 0),
-		Quantity:        2,
-		TotalPrice:      100.0,
-		Status:          "created",
-	},
-	2: {
-		ID:              2,
-		UserID:          456,
-		ProductRequests: make([]entity.OrderRequest, 0),
-		Quantity:        1,
-		TotalPrice:      50.0,
-		Status:          "created",
-	},
+func NewOrderRepository(db *gorm.DB) OrderRepository {
+	return &orderRepository{
+		db: db,
+	}
 }
 
 // GetOrderByID retrieves an order by its ID from the in-memory storage.
@@ -87,12 +74,19 @@ var orders = map[int64]*entity.Order{
 // Returns:
 //   - A pointer to the Order entity if found.
 //   - An error if the order is not found.
-func (r *orderRepository) GetOrderByID(id int64) (*entity.Order, error) {
-	order, ok := orders[id]
-	if !ok {
-		return nil, nil
+func (r *orderRepository) GetOrderByID(ctx context.Context, id int64) (*entity.Order, error) {
+	var order entity.Order
+	err := r.db.Table("orders").WithContext(ctx).Where("id = ?", id).First(&order).Error
+	if err != nil {
+		if err == gorm.ErrRecordNotFound {
+			log.Logger.Info().Int64("orderID", id).Msg("Order not found")
+			return nil, nil
+		}
+		log.Logger.Error().Err(err).Int64("orderID", id).Msg("Failed to get order by ID")
+		return nil, err
 	}
-	return order, nil
+
+	return &order, nil
 }
 
 // CreateOrder creates a new order in the in-memory storage.
@@ -103,9 +97,13 @@ func (r *orderRepository) GetOrderByID(id int64) (*entity.Order, error) {
 // Returns:
 //   - A pointer to the created Order entity with an auto-generated ID.
 //   - An error if the creation process fails.
-func (r *orderRepository) CreateOrder(order *entity.Order) (*entity.Order, error) {
-	order.ID = int64(len(orders) + 1) // Simulating an auto-generated ID
-	orders[order.ID] = order
+func (r *orderRepository) CreateOrder(ctx context.Context, order *entity.Order) (*entity.Order, error) {
+	err := r.db.Table("orders").WithContext(ctx).Create(order).Error
+	if err != nil {
+		log.Logger.Error().Err(err).Msg("Failed to create order")
+		return nil, err
+	}
+
 	return order, nil
 }
 
@@ -117,8 +115,12 @@ func (r *orderRepository) CreateOrder(order *entity.Order) (*entity.Order, error
 // Returns:
 //   - A pointer to the updated Order entity.
 //   - An error if the update process fails.
-func (r *orderRepository) UpdateOrder(order *entity.Order) (*entity.Order, error) {
-	orders[order.ID] = order
+func (r *orderRepository) UpdateOrder(ctx context.Context, order *entity.Order) (*entity.Order, error) {
+	err := r.db.Table("orders").WithContext(ctx).Save(order).Error
+	if err != nil {
+		log.Logger.Error().Err(err).Int64("orderID", order.ID).Msg("Failed to update order")
+		return nil, err
+	}
 	return order, nil
 }
 
@@ -129,11 +131,23 @@ func (r *orderRepository) UpdateOrder(order *entity.Order) (*entity.Order, error
 //
 // Returns:
 //   - An error if the order is not found or the deletion process fails.
-func (r *orderRepository) DeleteOrder(id int64) error {
-	_, ok := orders[id]
-	if !ok {
-		return nil // Order not found, nothing to delete
+func (r *orderRepository) DeleteOrder(ctx context.Context, id int64) error {
+	order, err := r.GetOrderByID(ctx, id)
+	if err != nil {
+		log.Logger.Error().Err(err).Int64("orderID", id).Msg("Failed to retrieve order before deletion")
+		return err
 	}
-	delete(orders, id)
+
+	if order == nil {
+		log.Logger.Warn().Int64("orderID", id).Msg("Order not found for deletion")
+		return gorm.ErrRecordNotFound
+	}
+
+	err = r.db.Table("orders").WithContext(ctx).Delete(&entity.Order{}, id).Error
+	if err != nil {
+		log.Logger.Error().Err(err).Int64("orderID", id).Msg("Failed to delete order")
+		return err
+	}
+
 	return nil
 }
