@@ -26,9 +26,9 @@ func main() {
 		config.WithConfigType("yaml"),
 	)
 
-	_ = resource.InitDB(appConfig)
+	db := resource.InitDB(appConfig)
 
-	orderRepo := repository.NewOrderRepository()
+	orderRepo := repository.NewOrderRepository(db)
 	orderService := service.NewOrderService(orderRepo, appConfig.Services.Product, appConfig.Services.Pricing)
 	orderHandler := api.NewOrderHandler(orderService)
 
