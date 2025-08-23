@@ -1,0 +1,21 @@
+app:
+  port: 8082
+
+db:
+  host: 127.0.0.1
+  port: 3306
+  user: admin
+  password: password
+  name: order-db
+
+secret:
+  jwtsecret: "secret"
+
+redis:
+  host: 127.0.0.1
+  port: 6379
+  password: "root"
+
+services:
+  product: "http://localhost:8081"
+  pricing: "http://localhost:8083"
