@@ -2,9 +2,10 @@ package repository
 
 import (
 	"context"
-	"gorm.io/gorm"
 	"order-service/infrastructure/log"
 	"order-service/internal/entity"
+
+	"gorm.io/gorm"
 )
 
 // OrderRepository defines the interface for managing orders in the repository layer.
@@ -48,6 +49,10 @@ type OrderRepository interface {
 	// Returns:
 	//   - An error if the deletion process fails or the order is not found.
 	DeleteOrder(ctx context.Context, id int64) error
+
+	CreateOrderTx(ctx context.Context, tx *gorm.DB, order *entity.Order) error
+	CreateOrderRequestTx(ctx context.Context, tx *gorm.DB, order *entity.OrderRequest) error
+	WithTransaction(ctx context.Context, fn func(tx *gorm.DB) error) error
 }
 
 // orderRepository is a concrete implementation of the OrderRepository interface.
@@ -107,6 +112,14 @@ func (r *orderRepository) CreateOrder(ctx context.Context, order *entity.Order) 
 	return order, nil
 }
 
+func (r *orderRepository) CreateOrderTx(ctx context.Context, tx *gorm.DB, order *entity.Order) error {
+	return tx.Table("orders").WithContext(ctx).Create(order).Error
+}
+
+func (r *orderRepository) CreateOrderRequestTx(ctx context.Context, tx *gorm.DB, order *entity.OrderRequest) error {
+	return tx.Table("product_requests").WithContext(ctx).Create(order).Error
+}
+
 // UpdateOrder updates an existing order in the in-memory storage.
 //
 // Parameters:
@@ -150,4 +163,23 @@ func (r *orderRepository) DeleteOrder(ctx context.Context, id int64) error {
 	}
 
 	return nil
+}
+
+func (r *orderRepository) WithTransaction(ctx context.Context, fn func(tx *gorm.DB) error) error {
+	tx := r.db.Begin().WithContext(ctx)
+
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+			panic(r)
+		}
+	}()
+
+	err := fn(tx)
+	if err != nil {
+		tx.Rollback()
+		return err
+	}
+
+	return tx.Commit().Error
 }

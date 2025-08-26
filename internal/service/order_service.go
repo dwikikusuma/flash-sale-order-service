@@ -1,21 +1,24 @@
 package service
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"order-service/infrastructure/log"
 	"order-service/internal/entity"
 	"order-service/internal/repository"
+
+	"gorm.io/gorm"
 )
 
 type OrderService interface {
 	// CreateOrder creates a new order with an initial status of "created".
-	CreateOrder(order *entity.Order) (*entity.Order, error)
+	CreateOrder(ctx context.Context, order *entity.Order) (*entity.Order, error)
 	// UpdateOrder updates an existing order by modifying its status to "updated".
-	UpdateOrder(order *entity.Order) (*entity.Order, error)
+	UpdateOrder(ctx context.Context, order *entity.Order) (*entity.Order, error)
 	// CancelOrder cancels an existing order by modifying its status to "cancelled".
-	CancelOrder(orderId int64) (*entity.Order, error)
+	CancelOrder(ctx context.Context, orderId int64) (*entity.Order, error)
 }
 
 // orderService provides methods to manage orders, including creating, updating, and canceling orders.
@@ -43,7 +46,7 @@ func NewOrderService(productRepository repository.OrderRepository, productServic
 // Returns:
 //   - A pointer to the created Order entity with updated fields.
 //   - An error if the creation process fails.
-func (s *orderService) CreateOrder(order *entity.Order) (*entity.Order, error) {
+func (s *orderService) CreateOrder(ctx context.Context, order *entity.Order) (*entity.Order, error) {
 	// Logic to create an order
 	// This could involve saving the order to a database, etc.
 	var totalPrice float64
@@ -107,18 +110,31 @@ func (s *orderService) CreateOrder(order *entity.Order) (*entity.Order, error) {
 		}
 	}
 
-	createdOrder, err := s.OrderRepository.CreateOrder(order)
+	err := s.OrderRepository.WithTransaction(ctx, func(tx *gorm.DB) error {
+		err := s.OrderRepository.CreateOrderTx(ctx, tx, order)
+		if err != nil {
+			log.Logger.Error().Err(err).Msg("Failed to create order in transaction")
+			return fmt.Errorf("failed to create order in transaction: %w", err)
+		}
+
+		for _, productRequest := range order.ProductRequests {
+			productRequest.OrderID = order.ID
+			err := s.OrderRepository.CreateOrderRequestTx(ctx, tx, &productRequest)
+			if err != nil {
+				log.Logger.Error().Err(err).Int64("productID", productRequest.ProductID).Msg("Failed to create order request in transaction")
+				return fmt.Errorf("failed to create order request in transaction for product ID %d: %w", productRequest.ProductID, err)
+			}
+		}
+
+		return nil
+	})
+
 	if err != nil {
-		log.Logger.Error().Err(err).Msg("Failed to create order")
-		return nil, fmt.Errorf("failed to create order: %w", err)
+		log.Logger.Error().Err(err).Msg("Transaction failed, rolling back")
+		return nil, err
 	}
 
-	if createdOrder == nil {
-		log.Logger.Warn().Msg("Order creation returned nil")
-		return nil, fmt.Errorf("failed to create order, order is nil")
-	}
-
-	return createdOrder, nil
+	return order, nil
 }
 
 // UpdateOrder updates an existing order by modifying its status to "updated".
@@ -129,10 +145,10 @@ func (s *orderService) CreateOrder(order *entity.Order) (*entity.Order, error) {
 // Returns:
 //   - A pointer to the updated Order entity.
 //   - An error if the update process fails.
-func (s *orderService) UpdateOrder(order *entity.Order) (*entity.Order, error) {
+func (s *orderService) UpdateOrder(ctx context.Context, order *entity.Order) (*entity.Order, error) {
 	// Logic to update an existing order
 	// This could involve updating the order in a database, etc.
-	updatedOrder, err := s.OrderRepository.UpdateOrder(order)
+	updatedOrder, err := s.OrderRepository.UpdateOrder(ctx, order)
 	if err != nil {
 		log.Logger.Error().Err(err).Msg("Failed to update order")
 		return nil, fmt.Errorf("failed to update order: %w", err)
@@ -152,10 +168,10 @@ func (s *orderService) UpdateOrder(order *entity.Order) (*entity.Order, error) {
 // Returns:
 //   - A pointer to the canceled Order entity.
 //   - An error if the cancellation process fails.
-func (s *orderService) CancelOrder(orderId int64) (*entity.Order, error) {
+func (s *orderService) CancelOrder(ctx context.Context, orderId int64) (*entity.Order, error) {
 	// Logic to cancel an order
 	// This could involve updating the order status in a database, etc.
-	order, err := s.OrderRepository.GetOrderByID(orderId)
+	order, err := s.OrderRepository.GetOrderByID(ctx, orderId)
 	if err != nil {
 		log.Logger.Error().Err(err).Int64("orderID", orderId).Msg("Failed to retrieve order for cancellation")
 		return nil, fmt.Errorf("failed to retrieve order: %w", err)
@@ -165,8 +181,9 @@ func (s *orderService) CancelOrder(orderId int64) (*entity.Order, error) {
 		log.Logger.Warn().Int64("orderID", orderId).Msg("Order not found for cancellation")
 		return nil, fmt.Errorf("order with ID %d not found", orderId)
 	}
+
 	order.Status = "cancelled" // Simulating a cancellation of the order
-	cancelledOrder, err := s.OrderRepository.UpdateOrder(order)
+	cancelledOrder, err := s.OrderRepository.UpdateOrder(ctx, order)
 	if err != nil {
 		log.Logger.Error().Err(err).Int64("orderID", orderId).Msg("Failed to cancel order")
 		return nil, fmt.Errorf("failed to cancel order: %w", err)
