@@ -7,6 +7,8 @@ db:
   user: admin
   password: password
   name: order-db
+  nameS1: order-db-s1
+  nameS2: order-db-s2
 
 secret:
   jwtsecret: "secret"

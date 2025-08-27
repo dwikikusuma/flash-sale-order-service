@@ -18,6 +18,8 @@ type DB struct {
 	User     string `mapstructure:"user" validate:"required"`
 	Password string `mapstructure:"password" validate:"required"`
 	Name     string `mapstructure:"name" validate:"required"`
+	NameS1   string `mapstructure:"nameS1" validate:"required"` // For sharding, e.g., db_name-s1
+	NameS2   string `mapstructure:"nameS2" validate:"required"` // For sharding, e.g., db_name-s2
 }
 
 type SecreteConfig struct {
