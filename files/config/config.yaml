@@ -11,7 +11,7 @@ db:
   nameS2: order-db-s2
 
 secret:
-  jwtsecret: "secret"
+  jwtSecret: "secret"
 
 redis:
   host: 127.0.0.1

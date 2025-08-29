@@ -24,7 +24,7 @@ type DB struct {
 }
 
 type SecreteConfig struct {
-	JWTSecret string `mapstructure:"jwt_secret" validate:"required"`
+	JWTSecret string `mapstructure:"jwtSecret" validate:"required"`
 }
 
 type Redis struct {

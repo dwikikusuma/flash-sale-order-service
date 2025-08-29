@@ -287,7 +287,7 @@ func (s *orderService) publishOrderCreatedEvent(order *entity.Order, key string)
 	}
 
 	msg := kafka.Message{
-		Key:   []byte(fmt.Sprintf("order-%s-%d", key, order.ID)),
+		Key:   []byte(fmt.Sprintf("order.%s.%d", key, order.ID)),
 		Value: orderJson,
 	}
 
