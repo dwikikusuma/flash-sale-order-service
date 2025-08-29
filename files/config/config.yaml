@@ -21,3 +21,10 @@ redis:
 services:
   product: "http://localhost:8081"
   pricing: "http://localhost:8083"
+
+kafka:
+  brokers:
+    - "localhost:9092"
+    - "localhost:9093"
+    - "localhost:9094"
+  topic: "order-topic"

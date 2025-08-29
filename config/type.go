@@ -6,6 +6,7 @@ type Config struct {
 	Redis    Redis         `mapstructure:"redis" validate:"required"`
 	Secret   SecreteConfig `mapstructure:"secret" validate:"required"`
 	Services Services      `mapstructure:"services" validate:"required"`
+	Kafka    Kafka         `mapstructure:"kafka" validate:"required"`
 }
 
 type App struct {
@@ -35,4 +36,9 @@ type Redis struct {
 type Services struct {
 	Product string `mapstructure:"product" validate:"required"`
 	Pricing string `mapstructure:"pricing" validate:"required"`
+}
+
+type Kafka struct {
+	Brokers []string `mapstructure:"brokers" validate:"required"`
+	Topic   string   `mapstructure:"topic" validate:"required"`
 }

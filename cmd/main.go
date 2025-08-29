@@ -8,6 +8,7 @@ import (
 	"order-service/internal/resource"
 	"order-service/internal/service"
 	reqMiddleware "order-service/middleware"
+	"order-service/msgBroker"
 	"order-service/routes"
 	"time"
 
@@ -27,9 +28,16 @@ func main() {
 	)
 
 	db := resource.InitDB(appConfig)
+	kafkaWriter := msgBroker.NewKafkaWriter(appConfig.Kafka.Brokers, appConfig.Kafka.Topic)
 
 	orderRepo := repository.NewOrderRepository(db)
-	orderService := service.NewOrderService(orderRepo, appConfig.Services.Product, appConfig.Services.Pricing)
+	orderService := service.NewOrderService(
+		orderRepo,
+		appConfig.Services.Product,
+		appConfig.Services.Pricing,
+		kafkaWriter,
+	)
+
 	orderHandler := api.NewOrderHandler(orderService)
 
 	e := echo.New()

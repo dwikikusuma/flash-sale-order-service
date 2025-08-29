@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"errors"
 	"order-service/infrastructure/log"
 	"order-service/internal/entity"
 
@@ -51,7 +52,7 @@ type OrderRepository interface {
 	DeleteOrder(ctx context.Context, id int64) error
 
 	CreateOrderTx(ctx context.Context, tx *gorm.DB, order *entity.Order) error
-	CreateOrderRequestTx(ctx context.Context, tx *gorm.DB, order *entity.OrderRequest) error
+	CreateOrderRequestTx(ctx context.Context, tx *gorm.DB, order []entity.OrderRequest) error
 	WithTransaction(ctx context.Context, fn func(tx *gorm.DB) error) error
 }
 
@@ -83,7 +84,7 @@ func (r *orderRepository) GetOrderByID(ctx context.Context, id int64) (*entity.O
 	var order entity.Order
 	err := r.db.Table("orders").WithContext(ctx).Where("id = ?", id).First(&order).Error
 	if err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			log.Logger.Info().Int64("orderID", id).Msg("Order not found")
 			return nil, nil
 		}
@@ -116,8 +117,11 @@ func (r *orderRepository) CreateOrderTx(ctx context.Context, tx *gorm.DB, order 
 	return tx.Table("orders").WithContext(ctx).Create(order).Error
 }
 
-func (r *orderRepository) CreateOrderRequestTx(ctx context.Context, tx *gorm.DB, order *entity.OrderRequest) error {
-	return tx.Table("product_requests").WithContext(ctx).Create(order).Error
+func (r *orderRepository) CreateOrderRequestTx(ctx context.Context, tx *gorm.DB, orderRequest []entity.OrderRequest) error {
+	if len(orderRequest) == 0 {
+		return nil
+	}
+	return tx.Table("product_requests").WithContext(ctx).CreateInBatches(orderRequest, 100).Error
 }
 
 // UpdateOrder updates an existing order in the in-memory storage.

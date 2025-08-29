@@ -9,6 +9,7 @@ import (
 	"order-service/internal/entity"
 	"order-service/internal/repository"
 
+	"github.com/segmentio/kafka-go"
 	"gorm.io/gorm"
 )
 
@@ -26,14 +27,16 @@ type orderService struct {
 	OrderRepository   repository.OrderRepository
 	ProductServiceURL string // URL for the product service, if needed for communication
 	PricingServiceURL string // URL for the pricing service, if needed for communication
+	KafkaWriter       *kafka.Writer
 }
 
 // NewOrderService creates and returns a new instance of orderService.
-func NewOrderService(productRepository repository.OrderRepository, productServiceURL, PricingServiceURL string) OrderService {
+func NewOrderService(productRepository repository.OrderRepository, productServiceURL, PricingServiceURL string, kafkaWriter *kafka.Writer) OrderService {
 	return &orderService{
 		OrderRepository:   productRepository,
 		ProductServiceURL: productServiceURL,
 		PricingServiceURL: PricingServiceURL,
+		KafkaWriter:       kafkaWriter,
 	}
 }
 
@@ -117,13 +120,11 @@ func (s *orderService) CreateOrder(ctx context.Context, order *entity.Order) (*e
 			return fmt.Errorf("failed to create order in transaction: %w", err)
 		}
 
-		for _, productRequest := range order.ProductRequests {
-			productRequest.OrderID = order.ID
-			err := s.OrderRepository.CreateOrderRequestTx(ctx, tx, &productRequest)
-			if err != nil {
-				log.Logger.Error().Err(err).Int64("productID", productRequest.ProductID).Msg("Failed to create order request in transaction")
-				return fmt.Errorf("failed to create order request in transaction for product ID %d: %w", productRequest.ProductID, err)
-			}
+		orderRequests := s.mapOrderRequestWithOrderID(order)
+		err = s.OrderRepository.CreateOrderRequestTx(ctx, tx, orderRequests)
+		if err != nil {
+			log.Logger.Error().Err(err).Msg("Failed to create order requests in transaction")
+			return fmt.Errorf("failed to create order requests in transaction: %w", err)
 		}
 
 		return nil
@@ -132,6 +133,12 @@ func (s *orderService) CreateOrder(ctx context.Context, order *entity.Order) (*e
 	if err != nil {
 		log.Logger.Error().Err(err).Msg("Transaction failed, rolling back")
 		return nil, err
+	}
+
+	err = s.publishOrderCreatedEvent(order, "created")
+	if err != nil {
+		log.Logger.Error().Err(err).Int64("orderID", order.ID).Msg("Failed to publish order created event")
+		return nil, fmt.Errorf("failed to publish order created event: %w", err)
 	}
 
 	return order, nil
@@ -148,6 +155,22 @@ func (s *orderService) CreateOrder(ctx context.Context, order *entity.Order) (*e
 func (s *orderService) UpdateOrder(ctx context.Context, order *entity.Order) (*entity.Order, error) {
 	// Logic to update an existing order
 	// This could involve updating the order in a database, etc.
+
+	if order.Status == "Paid" {
+		for _, orderRequest := range order.ProductRequests {
+			match, err := s.checkProductStock(orderRequest.ProductID, orderRequest.Quantity)
+			if err != nil {
+				log.Logger.Error().Err(err).Int64("productID", orderRequest.ProductID).Msg("Failed to check product stock during order update")
+				return nil, fmt.Errorf("failed to check product stock for product ID %d: %w", orderRequest.ProductID, err)
+			}
+
+			if !match {
+				log.Logger.Warn().Int64("productID", orderRequest.ProductID).Msg("Insufficient stock for product during order update")
+				return nil, fmt.Errorf("insufficient stock for product ID %d", orderRequest.ProductID)
+			}
+		}
+	}
+
 	updatedOrder, err := s.OrderRepository.UpdateOrder(ctx, order)
 	if err != nil {
 		log.Logger.Error().Err(err).Msg("Failed to update order")
@@ -157,6 +180,13 @@ func (s *orderService) UpdateOrder(ctx context.Context, order *entity.Order) (*e
 		log.Logger.Warn().Int64("orderID", order.ID).Msg("Order not found for update")
 		return nil, fmt.Errorf("order with ID %d not found", order.ID)
 	}
+
+	err = s.publishOrderCreatedEvent(updatedOrder, "updated")
+	if err != nil {
+		log.Logger.Error().Err(err).Int64("orderID", updatedOrder.ID).Msg("Failed to publish order updated event")
+		return nil, fmt.Errorf("failed to publish order updated event: %w", err)
+	}
+
 	return updatedOrder, nil
 }
 
@@ -187,6 +217,12 @@ func (s *orderService) CancelOrder(ctx context.Context, orderId int64) (*entity.
 	if err != nil {
 		log.Logger.Error().Err(err).Int64("orderID", orderId).Msg("Failed to cancel order")
 		return nil, fmt.Errorf("failed to cancel order: %w", err)
+	}
+
+	err = s.publishOrderCreatedEvent(cancelledOrder, "cancelled")
+	if err != nil {
+		log.Logger.Error().Err(err).Int64("orderID", cancelledOrder.ID).Msg("Failed to publish order cancelled event")
+		return nil, fmt.Errorf("failed to publish order cancelled event: %w", err)
 	}
 
 	return cancelledOrder, nil
@@ -242,4 +278,33 @@ func (s *orderService) getPricing(productID int64) (*entity.Pricing, error) {
 	}
 
 	return &pricing, nil
+}
+
+func (s *orderService) publishOrderCreatedEvent(order *entity.Order, key string) error {
+	orderJson, err := json.Marshal(order)
+	if err != nil {
+		return err
+	}
+
+	msg := kafka.Message{
+		Key:   []byte(fmt.Sprintf("order-%s-%d", key, order.ID)),
+		Value: orderJson,
+	}
+
+	err = s.KafkaWriter.WriteMessages(context.Background(), msg)
+	if err != nil {
+		log.Logger.Error().Err(err).Int64("orderID", order.ID).Msg("Failed to publish order created event to Kafka")
+		return fmt.Errorf("failed to publish order created event to Kafka: %w", err)
+	}
+
+	return nil
+}
+
+func (s *orderService) mapOrderRequestWithOrderID(order *entity.Order) []entity.OrderRequest {
+	var orderRequests []entity.OrderRequest
+	for _, productRequest := range order.ProductRequests {
+		productRequest.OrderID = order.ID
+		orderRequests = append(orderRequests, productRequest)
+	}
+	return orderRequests
 }
